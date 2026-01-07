@@ -89,10 +89,11 @@ class Animation3D(ShowBase):
 
         # --- Initialize PBR ---
         simplepbr.init(
-            enable_shadows=True,
-            shadow_bias=0.005
+            enable_shadows=False
         )
         self.setBackgroundColor(0, 0, 0, 1)
+
+        self.extra_scale = 1.0
 
         # --- Load models ---
         self.earth = loader.loadModel("models/earth/scene.gltf")
@@ -132,7 +133,7 @@ class Animation3D(ShowBase):
         ground_diameter = min(diameter_x, diameter_y, diameter_z)
 
         scale_factor = (6_371_000.0+130_000) / (diameter_mean / 2)
-        self.earth.setScale(scale_factor)
+        self.earth.setScale(scale_factor*self.extra_scale)
 
         # --- Starship sizing ---
         min_s, max_s = self.starship.getTightBounds()
@@ -147,7 +148,7 @@ class Animation3D(ShowBase):
         # Scale to real size
         TARGET_HEIGHT = 50.0  # meters
         scale_starship = TARGET_HEIGHT / starship_height_model
-        self.starship.setScale(scale_starship)
+        self.starship.setScale(scale_starship*self.extra_scale)
 
         # Recompute bounds after scaling (world space)
         min_s, max_s = self.starship.getTightBounds(self.render)

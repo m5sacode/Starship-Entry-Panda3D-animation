@@ -21,6 +21,14 @@ from direct.task import Task
 
 from panda3d.core import TextNode
 
+from panda3d.core import load_prc_file_data
+
+load_prc_file_data("", """
+fullscreen true
+win-size 1920 1080
+undecorated true
+""")
+
 
 # ------------------------------
 # Starship parameters (empty)
@@ -155,8 +163,8 @@ def smooth_signal(data, window=5):
     pad = np.full(window-1, smoothed[0])  # pad start with first value
     return np.concatenate([pad, smoothed])
 
-bank_angles = smooth_signal(bank_angles, window=10)
-aoas = smooth_signal(aoas, window=50)
+bank_angles = smooth_signal(bank_angles, window=100)
+aoas = smooth_signal(aoas, window=100)
 
 
 def altitude_to_sky_color(alt_m):
@@ -348,7 +356,9 @@ class Animation3D(ShowBase):
 
         lens = self.cam.node().getLens()
         lens.setNear(1.0)
-        lens.setFar(1.0e6)  # 10 million meters
+        lens.setFar(5.0e6)  # 1 million meters
+
+        self.camera.reparentTo(self.render)
 
     # =====================================================
     # Lighting
@@ -401,81 +411,73 @@ class Animation3D(ShowBase):
     # UI
     # =====================================================
     def create_ui(self):
+        aspect = base.getAspectRatio()
+
+        # --- Main UI bar ---
         self.ui_frame = DirectFrame(
             frameColor=(0, 0, 0, 0.5),
-            frameSize=(-0.6, 0.6, -0.15, 0.15),
-            pos=(0, 0, -0.85)
+            frameSize=(-aspect, aspect, -0.1, 0.1),
+            pos=(0, 0, -0.95)
         )
 
-        self.play_button = DirectButton(
-            text="Start",
-            scale=0.05,
-            pos=(-0.5, 0, 0),
-            command=self.toggle_play,
-            parent=self.ui_frame
-        )
+        self.ui_frame.setClipPlaneOff()
 
-        self.progress = DirectWaitBar(
-            range=len(traj_time),
-            value=0,
-            scale=(0.7, 1, 0.045),
-            pos=(0, 0, -0.08),
-            parent=self.ui_frame
-        )
+        # --- Play button (left) ---
+        self.play_button = DirectButton( text=" Paused ", scale=0.08, pos=(-0.4, 0, 0.02), command=self.toggle_play, parent=self.ui_frame )
 
-        self.telemetry = DirectLabel(
-            text="",
-            scale=0.045,
-            pos=(0.1, 0, 0.02),
-            text_align=TextNode.ALeft,
+
+        # --- T-clock (CENTER, BIG) ---
+        self.t_clock = DirectLabel(
+            text="T+00:00:00",
+            scale=0.09,
+            pos=(0, 0, 0.02),
+            text_align=TextNode.ACenter,
             text_fg=(1, 1, 1, 1),
             text_shadow=(0, 0, 0, 1),
             parent=self.ui_frame
         )
 
-        # --- Time scale buttons ---
-        self.btn_x1 = DirectButton(
-            text="x1",
+        # --- Telemetry (RIGHT) ---
+        self.telemetry = DirectLabel(
+            text="",
             scale=0.045,
-            pos=(-0.40, 0, 0),
-            command=self.set_time_scale,
-            extraArgs=[1],
+            pos=(aspect - 0.08, 0, 0.02),
+            text_align=TextNode.ARight,
+            text_fg=(1, 1, 1, 1),
+            text_shadow=(0, 0, 0, 1),
             parent=self.ui_frame
         )
 
-        self.btn_x2 = DirectButton(
-            text="x2",
-            scale=0.045,
-            pos=(-0.25, 0, 0),
-            command=self.set_time_scale,
-            extraArgs=[2],
-            parent=self.ui_frame
+        # --- Progress bar (BOTTOM, FULL WIDTH) ---
+        self.progress = DirectWaitBar(
+            range=len(traj_time),
+            value=0,
+            frameSize=(-aspect + 0.05, aspect - 0.05, -0.02, 0.02),
+            pos=(0, 0, -0.075),
+            parent=self.ui_frame,
+            barColor=(0.2, 0.7, 1.0, 1)
         )
 
-        self.btn_x5 = DirectButton(
-            text="x5",
-            scale=0.045,
-            pos=(-0.10, 0, 0),
-            command=self.set_time_scale,
-            extraArgs=[5],
-            parent=self.ui_frame
-        )
+        # --- Time scale buttons (below center) ---
+        x_positions = [-0.30, -0.15, 0.0, 0.15]
+        scales = [1, 2, 5, 10]
 
-        self.btn_x10 = DirectButton(
-            text="x10",
-            scale=0.045,
-            pos=(0.05, 0, 0),
-            command=self.set_time_scale,
-            extraArgs=[10],
-            parent=self.ui_frame
-        )
+        for x, s in zip(x_positions, scales):
+            DirectButton(
+                text=f"x{s}",
+                scale=0.045,
+                pos=(x, 0, -0.035),
+                command=self.set_time_scale,
+                extraArgs=[s],
+                parent=self.ui_frame
+            )
 
     def set_time_scale(self, scale):
         self.time_scale = scale
 
     def toggle_play(self):
         self.playing = not self.playing
-        self.play_button["text"] = "Pause" if self.playing else "Start"
+        self.play_button["text"] = " Pause " if self.playing else " Start "
 
     # =====================================================
     # Animation loop (Earth moves!)
@@ -504,11 +506,17 @@ class Animation3D(ShowBase):
 
         # --- Telemetry ---
         t_remaining = traj_time[-1] - traj_time[self.traj_index]
+
+        hours = int(t_remaining // 3600)
+        minutes = int((t_remaining % 3600) // 60)
+        seconds = int(t_remaining % 60)
+
+        self.t_clock["text"] = f"T-{hours:02d}:{minutes:02d}:{seconds:02d}"
+
         alt_km = traj_alt[self.traj_index] / 1000
         mach = traj_mach[self.traj_index]
 
         self.telemetry["text"] = (
-            f"T- {t_remaining:6.1f} s\n"
             f"Alt: {alt_km:6.1f} km\n"
             f"Mach: {mach:5.2f}"
         )
@@ -586,6 +594,12 @@ class Animation3D(ShowBase):
 
         # 2. Draw them vectors (attach to render or starship root)
         # draw_vectors(starship_pos, vel_np, right, up, self.earth_root)
+
+        # Desired offset from the Starship
+        offset = Vec3(120, -50, 200)  # X=forward, Y=back, Z=up (world axes)
+
+        self.camera.setPos(offset)
+        self.camera.lookAt(Vec3(0,0,0), up)  # Z-axis as up
 
         return Task.cont
 

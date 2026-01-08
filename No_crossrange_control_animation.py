@@ -2,11 +2,24 @@ import reentripy as rpy
 import numpy as np
 from pystdatm import density
 
+import math
+
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import WindowProperties
 from panda3d.core import load_prc_file
 import simplepbr
 from panda3d.core import DirectionalLight, AmbientLight, Vec3, Vec4
+
+from panda3d.core import Mat3, Quat
+from panda3d.core import TransformState
+
+
+from direct.gui.DirectGui import (
+    DirectButton, DirectWaitBar, DirectFrame, DirectLabel
+)
+from direct.task import Task
+
+from panda3d.core import TextNode
 
 
 # ------------------------------
@@ -75,12 +88,170 @@ sc.alpha = 50
 sc.banking_angle = 0
 sc.alpha = 50
 
-# times, altitudes, speeds, machs, bank_angles, g_forces, descent_rates, positions, lon, lat, heat_loads, heat_fluxes, aoas, sogs_vecs = sc.run_reentry(gif=False, controller="aPQC", DTLH=True) # With controller adjusting bank trying to keep max heating (DOESN'T REALLY WORK --> HIGH Gs)
+import os
+
+cache_file = "reentry_run_starship_IFT.npz"
+
+if os.path.exists(cache_file):
+    print("Loading cached reentry run...")
+    data = np.load(cache_file)
+    times = data["times"]
+    altitudes = data["altitudes"]
+    speeds = data["speeds"]
+    machs = data["machs"]
+    bank_angles = data["bank_angles"]
+    g_forces = data["g_forces"]
+    descent_rates = data["descent_rates"]
+    positions = data["positions"]
+    lon = data["lon"]
+    lat = data["lat"]
+    heat_loads = data["heat_loads"]
+    heat_fluxes = data["heat_fluxes"]
+    aoas = data["aoas"]
+    sogs_vecs = data["sogs_vecs"]
+else:
+    print("Running reentry simulation...")
+    times, altitudes, speeds, machs, bank_angles, g_forces, descent_rates, positions, lon, lat, heat_loads, heat_fluxes, aoas, sogs_vecs = sc.run_reentry(
+        gif=False,
+        controller="aPQC",
+        DTLH=True
+    )
+
+    np.savez(cache_file,
+        times=times,
+        altitudes=altitudes,
+        speeds=speeds,
+        machs=machs,
+        bank_angles=bank_angles,
+        g_forces=g_forces,
+        descent_rates=descent_rates,
+        positions=positions,
+        lon=lon,
+        lat=lat,
+        heat_loads=heat_loads,
+        heat_fluxes=heat_fluxes,
+        aoas=aoas,
+        sogs_vecs=sogs_vecs
+    )
+
 
 from panda3d.core import LineSegs, NodePath
 
 
+def rolling_average(data, window=5):
+    """
+    Applies a simple moving average filter to a 1D array.
+    Args:
+        data: 1D numpy array
+        window: number of samples to average over
+    Returns:
+        Smoothed 1D numpy array
+    """
+    cumsum = np.cumsum(np.insert(data, 0, 0))
+    return (cumsum[window:] - cumsum[:-window]) / window
 
+def smooth_signal(data, window=5):
+    smoothed = rolling_average(data, window)
+    pad = np.full(window-1, smoothed[0])  # pad start with first value
+    return np.concatenate([pad, smoothed])
+
+bank_angles = smooth_signal(bank_angles, window=10)
+aoas = smooth_signal(aoas, window=50)
+
+
+def altitude_to_sky_color(alt_m):
+    """
+    Returns an RGB tuple for the sky color as a function of altitude.
+    alt_m: altitude in meters
+    """
+    # Altitudes in meters
+    min_alt = 0       # sea level
+    max_alt = 100_000 # 100 km
+
+    # Clamp altitude
+    alt_m = max(min_alt, min(alt_m, max_alt))
+
+    # Define space color (black) and daylight blue
+    space_color = np.array([0.0, 0.0, 0.0])        # near black
+    daylight_color = np.array([0.53, 0.81, 0.92])   # light sky blue
+
+    t = (alt_m / max_alt) ** 0.5  # faster transition near ground
+    color = space_color * t + daylight_color * (1 - t)
+
+    return tuple(color)
+
+
+def lla_to_ecef(lat, lon, alt_m, R=6_371_000.0):
+
+
+
+    r = R + alt_m
+
+    x = r * np.cos(lat) * np.cos(lon)
+    y = r * np.cos(lat) * np.sin(lon)
+    z = r * np.sin(lat)
+
+    return Vec3(x, y, z)
+
+
+traj_lat = lat
+traj_lon = lon
+traj_alt = altitudes
+traj_mach = machs
+traj_time = times
+
+def descent_angle(vel: Vec3, up_local: Vec3) -> float:
+    """
+    Compute descent angle (deg) relative to vertical.
+    vel: velocity vector (Panda3D Vec3)
+    up_local: vector from Earth's center to craft (normalized)
+    Returns:
+        descent angle in degrees (0 = horizontal, 90 = straight down)
+    """
+    vel_norm = vel.normalized()
+    up_norm = up_local.normalized()
+
+    # Angle between -up_local and velocity
+    cos_gamma = (-up_norm).dot(vel_norm)
+    cos_gamma = np.clip(cos_gamma, -1.0, 1.0)  # numerical safety
+    gamma_rad = np.arccos(cos_gamma)
+    gamma_deg = 90-np.degrees(gamma_rad)
+    return gamma_deg
+
+
+from panda3d.core import LineSegs, NodePath, Vec3
+
+
+def draw_vectors(origin: Vec3, vel: Vec3, right: Vec3, up: Vec3, parent):
+    """
+    Draw velocity, right, and up vectors as colored arrows.
+    origin: Vec3 start point
+    vel, right, up: normalized Vec3 directions
+    parent: NodePath to attach to (e.g., self.render)
+    """
+    scale = 50  # adjust length for visibility
+
+    ls = LineSegs()
+    ls.setThickness(3)
+
+    # Velocity (red)
+    ls.setColor(1, 0, 0, 1)
+    ls.moveTo(origin)
+    ls.drawTo(origin + vel * scale)
+
+    # Right (green)
+    ls.setColor(0, 1, 0, 1)
+    ls.moveTo(origin)
+    ls.drawTo(origin + right * scale)
+
+    # Up (blue)
+    ls.setColor(0, 0, 1, 1)
+    ls.moveTo(origin)
+    ls.drawTo(origin + up * scale)
+
+    np = NodePath(ls.create())
+    np.reparentTo(parent)
+    return np
 
 
 class Animation3D(ShowBase):
@@ -88,131 +259,335 @@ class Animation3D(ShowBase):
         ShowBase.__init__(self)
 
         # --- Initialize PBR ---
-        simplepbr.init(
-            enable_shadows=False
-        )
+        simplepbr.init(enable_shadows=False)
         self.setBackgroundColor(0, 0, 0, 1)
 
         self.extra_scale = 1.0
 
-        # --- Load models ---
+        # ======================
+        # Load models
+        # ======================
         self.earth = loader.loadModel("models/earth/scene.gltf")
         self.starship = loader.loadModel("models/starship/starship.gltf")
 
-        self.earth.reparentTo(self.render)
+        # --- Root for Earth motion ---
+        self.earth_root = self.render.attachNewNode("earth_root")
+        self.earth.reparentTo(self.earth_root)
+
+        # Starship stays in world space
         self.starship.reparentTo(self.render)
 
+        # ======================
+        # Earth scaling
+        # ======================
         min_pt, max_pt = self.earth.getTightBounds()
-
         if min_pt is None:
             self.earth.flattenStrong()
             min_pt, max_pt = self.earth.getTightBounds()
 
         size = max_pt - min_pt
-        dx, dy, dz = size.x, size.y, size.z
-        target_diameter = min(dx, dy, dz)
+        diameter_mean = (size.x + size.y + size.z) / 3
 
-        sx = target_diameter / dx
-        sy = target_diameter / dy
-        sz = target_diameter / dz
+        scale_factor = (6_371_000.0 + 111_000) / (diameter_mean / 2)
+        self.earth.setScale(scale_factor * self.extra_scale)
 
-        self.earth.setScale(sx, sy, sz)
-
-        diameter_x = size.x
-        diameter_y = size.y
-        diameter_z = size.z
-
-        print("Earth model diameters:")
-        print("X:", diameter_x)
-        print("Y:", diameter_y)
-        print("Z:", diameter_z)
-
-        diameter_mean = (diameter_x + diameter_y + diameter_z) / 3
-        print("Mean diameter:", diameter_mean)
-
-        ground_diameter = min(diameter_x, diameter_y, diameter_z)
-
-        scale_factor = (6_371_000.0+130_000) / (diameter_mean / 2)
-        self.earth.setScale(scale_factor*self.extra_scale)
-
-        # --- Starship sizing ---
+        # ======================
+        # Starship scaling
+        # ======================
         min_s, max_s = self.starship.getTightBounds()
         if min_s is None:
             self.starship.flattenStrong()
             min_s, max_s = self.starship.getTightBounds()
 
-        size_s = max_s - min_s
-        starship_height_model = size_s.z
-        print("Starship model height:", starship_height_model)
-
-        # Scale to real size
+        starship_height_model = (max_s - min_s).z
         TARGET_HEIGHT = 50.0  # meters
-        scale_starship = TARGET_HEIGHT / starship_height_model
-        self.starship.setScale(scale_starship*self.extra_scale)
+        self.starship.setScale(
+            (TARGET_HEIGHT / starship_height_model) * self.extra_scale
+        )
 
-        # Recompute bounds after scaling (world space)
-        min_s, max_s = self.starship.getTightBounds(self.render)
-        starship_bottom_offset = -min_s.z
+        # ======================
+        # Starship fixed position
+        # ======================
+        self.starship.setPos(0, 0, 0)
 
-        # Place on Earth's surface
-        EARTH_RADIUS = 6_371_000.0
-        self.starship.setPos(0, EARTH_RADIUS, 0)
-        # self.starship.setPos(0, 0, EARTH_RADIUS)
-        # self.starship.setPos(EARTH_RADIUS, 0, 0)
-
-        # Disable default mouse camera
-        # self.disableMouse()
-
-        # Attach camera to Starship
+        # ======================
+        # Camera
+        # ======================
         self.camera.reparentTo(self.starship)
+        self.camera.setPos(20, -40, 15)
+        self.camera.lookAt(0, 0, 25)
 
-        # Place camera next to Starship (meters)
-        # self.camera.setPos(20, -40, 15)  # right, back, up
-        self.camera.lookAt(0, 0, 25)  # look at mid-body
-
-        # --- Lighting setup ---
+        # ======================
+        # Lighting
+        # ======================
         self.setup_lighting()
 
-    def setup_lighting(self):
         # ======================
-        # Key light (sun)
+        # Trajectory (attached to Earth)
         # ======================
-        key_light = DirectionalLight("key_light")
-        key_light.setColor(Vec4(1.0, 0.95, 0.9, 1))  # warm sunlight
-        key_light.setShadowCaster(True, 4096, 4096)
+        self.draw_trajectory(lat, lon, altitudes)
 
+        # ======================
+        # Animation state
+        # ======================
+        self.traj_index = 0
+        self.playing = False
+        self.time_scale = 1  # x1, x2, x5, x10
+
+        # ======================
+        # UI
+        # ======================
+        self.create_ui()
+
+        # ======================
+        # Animation task
+        # ======================
+        self.taskMgr.add(self.update_animation, "update_animation")
+
+        lens = self.cam.node().getLens()
+        lens.setNear(1.0)
+        lens.setFar(1.0e7)  # 10 million meters
+
+    # =====================================================
+    # Lighting
+    # =====================================================
+    def setup_lighting(self):
+        key_light = DirectionalLight("key_light")
+        key_light.setColor(Vec4(1.0, 0.95, 0.9, 1))
         key_np = self.render.attachNewNode(key_light)
-        key_np.setHpr(45, -60, 0)  # angle down
+        key_np.setHpr(45, -60, 0)
         self.render.setLight(key_np)
 
-        # ======================
-        # Fill light
-        # ======================
         fill_light = DirectionalLight("fill_light")
-        fill_light.setColor(Vec4(0.4, 0.45, 0.5, 1))  # cool fill
-
+        fill_light.setColor(Vec4(0.4, 0.45, 0.5, 1))
         fill_np = self.render.attachNewNode(fill_light)
         fill_np.setHpr(-60, -30, 0)
         self.render.setLight(fill_np)
 
-        # ======================
-        # Rim light (edge highlight)
-        # ======================
         rim_light = DirectionalLight("rim_light")
         rim_light.setColor(Vec4(0.6, 0.6, 0.7, 1))
-
         rim_np = self.render.attachNewNode(rim_light)
         rim_np.setHpr(180, -20, 0)
         self.render.setLight(rim_np)
 
-        # ======================
-        # Ambient (very low)
-        # ======================
         ambient = AmbientLight("ambient")
         ambient.setColor(Vec4(0.03, 0.03, 0.03, 1))
-
         amb_np = self.render.attachNewNode(ambient)
         self.render.setLight(amb_np)
+
+    # =====================================================
+    # Trajectory drawing (Earth space)
+    # =====================================================
+    def draw_trajectory(self, lat, lon, alt):
+        segs = LineSegs()
+        segs.setThickness(1.5)
+        segs.setColor(1, 1, 1, 0.25)
+
+        first = True
+        for la, lo, al in zip(lat, lon, alt):
+            p = lla_to_ecef(la, lo, al)
+            if first:
+                segs.moveTo(p)
+                first = False
+            else:
+                segs.drawTo(p)
+
+        traj_np = NodePath(segs.create())
+        traj_np.reparentTo(self.earth_root)
+
+    # =====================================================
+    # UI
+    # =====================================================
+    def create_ui(self):
+        self.ui_frame = DirectFrame(
+            frameColor=(0, 0, 0, 0.5),
+            frameSize=(-0.6, 0.6, -0.15, 0.15),
+            pos=(0, 0, -0.85)
+        )
+
+        self.play_button = DirectButton(
+            text="Start",
+            scale=0.05,
+            pos=(-0.5, 0, 0),
+            command=self.toggle_play,
+            parent=self.ui_frame
+        )
+
+        self.progress = DirectWaitBar(
+            range=len(traj_time),
+            value=0,
+            scale=(0.7, 1, 0.045),
+            pos=(0, 0, -0.08),
+            parent=self.ui_frame
+        )
+
+        self.telemetry = DirectLabel(
+            text="",
+            scale=0.045,
+            pos=(0.1, 0, 0.02),
+            text_align=TextNode.ALeft,
+            text_fg=(1, 1, 1, 1),
+            text_shadow=(0, 0, 0, 1),
+            parent=self.ui_frame
+        )
+
+        # --- Time scale buttons ---
+        self.btn_x1 = DirectButton(
+            text="x1",
+            scale=0.045,
+            pos=(-0.40, 0, 0),
+            command=self.set_time_scale,
+            extraArgs=[1],
+            parent=self.ui_frame
+        )
+
+        self.btn_x2 = DirectButton(
+            text="x2",
+            scale=0.045,
+            pos=(-0.25, 0, 0),
+            command=self.set_time_scale,
+            extraArgs=[2],
+            parent=self.ui_frame
+        )
+
+        self.btn_x5 = DirectButton(
+            text="x5",
+            scale=0.045,
+            pos=(-0.10, 0, 0),
+            command=self.set_time_scale,
+            extraArgs=[5],
+            parent=self.ui_frame
+        )
+
+        self.btn_x10 = DirectButton(
+            text="x10",
+            scale=0.045,
+            pos=(0.05, 0, 0),
+            command=self.set_time_scale,
+            extraArgs=[10],
+            parent=self.ui_frame
+        )
+
+    def set_time_scale(self, scale):
+        self.time_scale = scale
+
+    def toggle_play(self):
+        self.playing = not self.playing
+        self.play_button["text"] = "Pause" if self.playing else "Start"
+
+    # =====================================================
+    # Animation loop (Earth moves!)
+    # =====================================================
+    def update_animation(self, task):
+
+        alt_m = traj_alt[self.traj_index]  # current altitude
+        self.setBackgroundColor(*altitude_to_sky_color(alt_m), 1)
+
+        if not self.playing:
+            return Task.cont
+
+        if self.traj_index >= len(traj_time):
+            self.playing = False
+            self.play_button["text"] = "Start"
+            return Task.done
+
+        # --- Earth moves opposite to spacecraft ---
+        pos = lla_to_ecef(
+            traj_lat[self.traj_index],
+            traj_lon[self.traj_index],
+            traj_alt[self.traj_index]
+        )
+        self.earth_root.setPos(-pos)
+
+
+        # --- Telemetry ---
+        t_remaining = traj_time[-1] - traj_time[self.traj_index]
+        alt_km = traj_alt[self.traj_index] / 1000
+        mach = traj_mach[self.traj_index]
+
+        self.telemetry["text"] = (
+            f"T- {t_remaining:6.1f} s\n"
+            f"Alt: {alt_km:6.1f} km\n"
+            f"Mach: {mach:5.2f}"
+        )
+
+        self.progress["value"] = self.traj_index
+        self.traj_index += self.time_scale
+        self.traj_index = min(self.traj_index, len(traj_time) - 1)
+
+        # --- Starship orientation using SOG vector ---
+
+        # 1. Velocity vector (unit)
+        starship_pos = lla_to_ecef(traj_lat[self.traj_index],
+                                   traj_lon[self.traj_index],
+                                   traj_alt[self.traj_index])
+        starship_pos_last = lla_to_ecef(traj_lat[self.traj_index-1],
+                                   traj_lon[self.traj_index-1],
+                                   traj_alt[self.traj_index-1])
+        vel_np = Vec3(*(starship_pos-starship_pos_last)).normalized()
+        vel_np = vel_np / np.linalg.norm(vel_np)
+        forward = Vec3(*vel_np)
+
+        # 2. Local up vector (Earth center to Starship)
+
+        up = starship_pos.normalized()
+
+        # Try to compute right; fallback if too small
+        right_candidate = up.cross(forward)
+        if right_candidate.length() < 1e-1:
+            # Forward is nearly vertical; keep previous right if available
+            try:
+                right = self.prev_right  # store last frame's right
+            except AttributeError:
+                # first frame fallback: pick any perpendicular vector
+                right = Vec3(1, 0, 0)
+        else:
+            right = right_candidate.normalized()
+            self.prev_right = right  # store for next frame
+
+        # Recompute up to ensure orthogonality
+        up = forward.cross(right).normalized()
+
+        # --- 1. Forward, right, up vectors ---
+        forward = vel_np.normalized()  # along velocity
+        up = up.normalized()  # local up
+        right = right.normalized()  # perpendicular to forward and up
+
+        # --- 2. Apply bank (rotate right/up around forward) ---
+        bank_rad = math.radians(bank_angles[self.traj_index])
+        cos_b = math.cos(bank_rad)
+        sin_b = math.sin(bank_rad)
+
+        right_banked = right * cos_b + up * sin_b
+        up_banked = -right * sin_b + up * cos_b
+
+        # --- 3. Apply AoA (rotate forward/up around right_banked) ---
+        aoa_rad = math.radians(aoas[self.traj_index])
+        cos_a = math.cos(aoa_rad)
+        sin_a = math.sin(aoa_rad)
+
+        forward_final = forward * cos_a + up_banked * sin_a
+        up_final = -forward * sin_a + up_banked * cos_a
+
+        # --- 4. Build rotation matrix / final orientation ---
+        mat = Mat3()
+        mat.setRow(0, right_banked)  # X-axis
+        mat.setRow(1, up_final)  # Y-axis
+        mat.setRow(2, forward_final)  # Z-axis
+
+        final_quat = Quat()
+        final_quat.setFromMatrix(mat)
+
+        self.starship.setQuat(final_quat)
+
+
+
+        # 2. Draw them vectors (attach to render or starship root)
+        # draw_vectors(starship_pos, vel_np, right, up, self.earth_root)
+
+        return Task.cont
+
+
 
 app = Animation3D()
 app.run()

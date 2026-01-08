@@ -346,7 +346,7 @@ class Animation3D(ShowBase):
 
         lens = self.cam.node().getLens()
         lens.setNear(1.0)
-        lens.setFar(1.0e7)  # 10 million meters
+        lens.setFar(1.0e6)  # 10 million meters
 
     # =====================================================
     # Lighting

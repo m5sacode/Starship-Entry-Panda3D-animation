@@ -10,7 +10,7 @@ loadPrcFileData("", "win-size 1024 768")
 def lla_to_ecef(lat_deg, lon_deg, alt_m, R=6_371_000.0):
     import numpy as np
     lat = np.deg2rad(lat_deg)
-    lon = np.deg2rad(lon_deg)
+    lon = np.deg2rad(lon_deg+198)
     r = R + alt_m
     x = r * np.cos(lat) * np.cos(lon)
     y = r * np.cos(lat) * np.sin(lon)
@@ -37,7 +37,7 @@ class TestStarshipPosition(ShowBase):
         size = max_pt - min_pt
         diameter_mean = (size.x + size.y + size.z) / 3
 
-        scale_factor = (6_371_000.0 + 130_000) / (diameter_mean / 2)
+        scale_factor = (6_371_140.0) / (diameter_mean / 2)
         self.earth.setScale(scale_factor)
 
         # Load Starship model
@@ -52,13 +52,19 @@ class TestStarshipPosition(ShowBase):
         # ============================
         # Set Starship at known coordinates
         # ============================
-        # test_lat = 28.5721   # Kennedy Space Center, FL
-        # test_lon = -80.6480
-        # test_alt = 200_000    # 100 km altitude
+        test_lat = 28.5721   # Kennedy Space Center, FL
+        test_lon = -80.6480
 
-        test_lat = 36.1408  # degrees North
-        test_lon = -5.3536  # degrees East (West is negative)
-        test_alt = 130_000  # 100 km
+        # test_lat = 66.0  # North pole
+        # test_lon = -60.0
+
+        # test_lat = 0.0
+        # test_lon = 0.0
+
+        # test_lat = 36.1408  # degrees North # Gibraltar
+        # test_lon = -5.3536  # degrees East (West is negative)
+
+        test_alt = 1_000 # 100 km
 
         pos = lla_to_ecef(test_lat, test_lon, test_alt)
         print("ECEF position:", pos)
@@ -68,6 +74,9 @@ class TestStarshipPosition(ShowBase):
         # Camera
         # ============================
 
+        lens = self.cam.node().getLens()
+        lens.setNear(1.0)
+        lens.setFar(1.0e7)  # 10 million meters
 
         # ============================
         # Lighting

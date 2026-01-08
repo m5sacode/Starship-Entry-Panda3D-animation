@@ -182,8 +182,10 @@ def altitude_to_sky_color(alt_m):
 
 
 def lla_to_ecef(lat, lon, alt_m, R=6_371_000.0):
-
-
+    # print(np.rad2deg(lon), np.rad2deg(lat))
+    lon = lon+np.deg2rad(197.85)
+    if lon>180:
+        lon-=360
 
     r = R + alt_m
 

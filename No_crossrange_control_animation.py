@@ -71,7 +71,7 @@ perigee = -15_000.0
 altitude = 200_000.0   # current altitude
 
 inclination = np.deg2rad(26.8)     # Starship-like
-arg_perigee = np.deg2rad(150)
+arg_perigee = np.deg2rad(148)
 raan = np.deg2rad(165.0)
 
 
@@ -99,9 +99,9 @@ sc.alpha = 50
 
 import os
 
-# cache_file = "reentry_run_starship_IFT_s_turns.npz"
+cache_file = "reentry_run_starship_IFT_s_turns.npz"
 
-cache_file = "reentry_run_starship_IFT_no_s_turns.npz"
+# cache_file = "reentry_run_starship_IFT_no_s_turns.npz"
 
 
 if os.path.exists(cache_file):

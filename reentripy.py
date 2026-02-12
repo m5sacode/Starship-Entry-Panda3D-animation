@@ -1155,7 +1155,7 @@ class Spacecraft:
 
         return self.heading_deg
 
-    def banking_angle_heading_PD_controller(self, target_heading, kP_la=25.0, kD_la = 0.5):
+    def banking_angle_heading_PD_controller(self, target_heading, kP_la=14.0, kD_la = 0.5):
         current_heading = self.get_heading_from_velocity()
         heading_error = target_heading - current_heading
         required_acc = kP_la * heading_error
@@ -1236,11 +1236,12 @@ class Spacecraft:
 
     def banking_angle_range_S_turn_controller(
             self,
-            heading_gain=10    ,
-            max_heading_offset_deg=5.0,
-            min_heading_offset_deg=0.1,
-            range_deadband=1_000.0,  # meters
-            crossrange_limit=150_000.0,  # meters
+            heading_gain=-400  ,
+            max_heading_offset_deg=15.0,
+            min_heading_offset_deg=0.5,
+            range_deadband=100.0,  # meters
+            crossrange_limit=200_000.0,  # meters
+            extra_range=17_000,  # meters
     ):
         """
         Shuttle-style range control using S-turns.
@@ -1266,7 +1267,7 @@ class Spacecraft:
         if not np.isfinite(est_range):
             return  # fail-safe: do nothing
 
-        actual_range = self.range
+        actual_range = self.range + extra_range
         range_error = est_range - actual_range
 
         # --- Deadband: go straight when close ---

@@ -71,7 +71,7 @@ perigee = -15_000.0
 altitude = 200_000.0   # current altitude
 
 inclination = np.deg2rad(26.8)     # Starship-like
-arg_perigee = np.deg2rad(148)
+arg_perigee = np.deg2rad(146)
 raan = np.deg2rad(165.0)
 
 

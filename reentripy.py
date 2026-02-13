@@ -1236,12 +1236,13 @@ class Spacecraft:
 
     def banking_angle_range_S_turn_controller(
             self,
-            heading_gain=-400  ,
-            max_heading_offset_deg=15.0,
-            min_heading_offset_deg=0.5,
-            range_deadband=100.0,  # meters
-            crossrange_limit=200_000.0,  # meters
-            extra_range=17_000,  # meters
+            heading_gain=30  ,
+            max_heading_offset_deg=2.0,
+            min_heading_offset_deg=0.0,
+            range_deadband=0.0,  # meters
+            crossrange_limit=20_000.0,  # meters
+            extra_range=25_000,  # meters
+            terminal_guidance_range=600_000, # meters
     ):
         """
         Shuttle-style range control using S-turns.
@@ -1271,26 +1272,28 @@ class Spacecraft:
         range_error = est_range - actual_range
 
         # --- Deadband: go straight when close ---
-        if abs(range_error) < range_deadband:
+        if abs(range_error) < range_deadband or self.range<terminal_guidance_range or self.controller=="terminal":
             self.target_heading_cmd = self.target_heading
             self.banking_angle_heading_PD_controller(self.target_heading_cmd)
             return
 
         # --- Heading offset magnitude (shrink as range error shrinks) ---
-        heading_offset = heading_gain * abs(range_error) / actual_range
-        heading_offset = np.clip(
-            heading_offset * max_heading_offset_deg,
-            min_heading_offset_deg,
-            max_heading_offset_deg
-        )
+        heading_offset = heading_gain * (-1*range_error) / actual_range
+        if heading_offset > max_heading_offset_deg:
+            heading_offset = max_heading_offset_deg
+
+        if heading_offset < min_heading_offset_deg:
+            heading_offset = 0.0
 
         # --- Crossrange estimation ---
         # Shuttle logic: flip bank when crossrange exceeds limit
         if not hasattr(self, "s_turn_sign"):
             self.s_turn_sign = 1
 
-        if abs(getattr(self, "crossrange", 0.0)) > crossrange_limit:
-            self.s_turn_sign *= -1
+        if (getattr(self, "crossrange", 0.0)) > crossrange_limit:
+            self.s_turn_sign = -1
+        elif (getattr(self, "crossrange", 0.0)) < -crossrange_limit:
+            self.s_turn_sign = 1
 
         # --- Command heading ---
         self.target_heading_cmd = (
@@ -1310,7 +1313,7 @@ class Spacecraft:
         """
 
         # Current position
-        lon, lat = self.last_lon, self.last_lat
+        lon, lat = self.longitude, self.latitude
 
         # Target
         lon_t = np.radians(self.landing_lon)
@@ -1498,7 +1501,7 @@ class Spacecraft:
                 #     self.banking_angle = 0
                 #     self.alpha = 90
                 # else:
-                if altitude < 35000.0:
+                if altitude < 40000.0:
                     self.controller = "terminal"
                 else:
                     self.attack_angle_h_PD_controller_smart_g_control()

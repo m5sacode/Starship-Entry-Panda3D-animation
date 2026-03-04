@@ -29,6 +29,8 @@ win-size 1920 1080
 undecorated true
 """)
 
+EARTH_LON_OFFSET_DEG = 197.85
+
 
 # ------------------------------
 # Starship parameters (empty)
@@ -691,15 +693,15 @@ class Animation3D(ShowBase):
         lat_now = traj_lat[self.traj_index]
         lon_now = traj_lon[self.traj_index]
 
-        lat_now = traj_lat[self.traj_index]
-        lon_now = traj_lon[self.traj_index]
+        # Apply SAME offset as lla_to_ecef
+        lon_shifted = lon_now + np.deg2rad(EARTH_LON_OFFSET_DEG)
 
-        # Convert radians to degrees
         lat_deg = np.degrees(lat_now)
-        lon_deg = np.degrees(lon_now)
+        lon_deg = np.degrees(lon_shifted)
 
-        # Rotate Earth opposite spacecraft position
-        self.mini_root.setHpr(-lon_deg, lat_deg, 0)
+        # Rotate globe opposite spacecraft location
+        self.mini_root.setH(-lon_deg)
+        self.mini_root.setP(lat_deg)
 
         # 2. Draw them vectors (attach to render or starship root)
         # draw_vectors(starship_pos, vel_np, right, up, self.earth_root)

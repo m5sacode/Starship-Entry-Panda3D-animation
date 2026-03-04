@@ -463,6 +463,7 @@ class Animation3D(ShowBase):
             scale=0.08,
             pos=(0, 0, 0.02),
             text_align=TextNode.ACenter,
+            frameColor=(0.0, 0.0, 0.0, 0.0),
             text_fg=FG_WHITE,
             text_shadow=(0, 0, 0, 0.9),
             text_font=font,
@@ -485,29 +486,46 @@ class Animation3D(ShowBase):
         self.progress = DirectWaitBar(
             range=len(traj_time),
             value=0,
-            frameSize=(-aspect + 0.05, aspect - 0.05, -0.02, 0.02),
-            pos=(0, 0, -0.06),
+            frameSize=(-aspect, aspect, -0.02, 0.02),
+            pos=(0, 0, -0.1),
             parent=self.ui_frame,
             barColor=ACCENT,
             frameColor=(0, 0, 0, 0.3)
         )
 
-        # ===== Time-scale buttons centered =====
-        x_positions = [-0.30, -0.10, 0.10, 0.30]
-        scales = [1, 2, 5, 10]
+        # ===== TIME WARP BUTTONS (same height as Start, narrower) =====
 
-        for x, s in zip(x_positions, scales):
+        btn_scale = 0.06
+
+        # Start button frameSize height: (-0.7 → 1.3)  ==> keep this
+        # Narrower width: reduce from (-2.5 → 2.5) to (-0.65 → 0.65)
+        warp_frame = (-1.0, 1.0, -0.7, 1.3)
+
+        start_btn_x = -aspect + 0.05 + 0.06
+        base_y = 0.015
+
+        # Horizontal spacing
+        spacing = 0.12
+
+        warp_buttons = [
+            ("x1", 1),
+            ("x2", 2),
+            ("x5", 5),
+            ("x10", 10),
+        ]
+
+        for i, (label, value) in enumerate(warp_buttons):
             DirectButton(
-                text=f"x{s}",
-                scale=0.045,
-                pos=(x, 0, -0.035),
+                text=label,
+                scale=btn_scale,
+                pos=(start_btn_x + 0.32 + i * spacing, 0, base_y),
                 frameColor=BG_LIGHT,
-                frameSize=(-1.5, 1.5, -0.55, 0.55),
+                frameSize=warp_frame,  # ← same height as Start, narrower width
                 text_fg=FG_WHITE,
                 text_font=font,
-                relief="ridge",
+                # relief="flat",
                 command=self.set_time_scale,
-                extraArgs=[s],
+                extraArgs=[value],
                 parent=self.ui_frame
             )
 

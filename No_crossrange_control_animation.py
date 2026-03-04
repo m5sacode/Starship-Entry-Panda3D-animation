@@ -29,6 +29,20 @@ win-size 1920 1080
 undecorated true
 """)
 
+# ===== SpaceX‑style Neutral Palette =====
+PALETTE = {
+    "black":       (0.00, 0.00, 0.00, 1.0),
+    "black_a35":   (0.00, 0.00, 0.00, 0.35),
+    "white":       (1.00, 1.00, 1.00, 1.0),
+    "white_a90":   (1.00, 1.00, 1.00, 0.90),
+    "grey_70":     (0.70, 0.70, 0.72, 1.0),
+    "grey_50":     (0.50, 0.50, 0.54, 1.0),
+    "grey_35":     (0.35, 0.35, 0.38, 1.0),
+    "grey_30a":    (0.30, 0.30, 0.33, 0.40),
+    "grey_20a":    (0.20, 0.20, 0.23, 0.40),
+    "dark_blue":   (0.08, 0.12, 0.22, 1.0),
+    "dark_blue_a": (0.08, 0.12, 0.22, 0.55),
+}
 
 # ------------------------------
 # Starship parameters (empty)
@@ -438,6 +452,184 @@ class FastSciFiGraph:
         if flag: self.root.show()
         else:    self.root.hide()
 
+from panda3d.core import CardMaker
+
+class SciFiMapPanel:
+    """
+    SpaceX-style 2D map panel with:
+      - equirectangular projection
+      - auto unit detection (deg/rad)
+      - optional texture background
+      - grid + trajectory + moving crosshair
+      - past/future color update (white/grey)
+      - safe split at dateline to avoid long horizontal line
+      - panel_alpha to make the whole panel semi-transparent
+    """
+
+    def __init__(self,
+                 lat_array, lon_array,
+                 pos=(0, 0, 0), size=(0.40, 0.32),
+                 color_past=(1.0, 1.0, 1.0, 1.0),        # past = white
+                 color_future=(0.35, 0.35, 0.38, 1.0),   # future = grey
+                 grid_color=(0.30, 0.30, 0.33, 0.40),     # subtle grey grid
+                 bg_color=(0.00, 0.00, 0.00, 0.35),       # translucent black
+                 marker_color=(1, 1, 1, 1),               # white crosshair
+                 texture_path=None,                       # optional world texture
+                 panel_alpha=1.0):                        # overall transparency (0..1)
+
+        # --- store / normalize inputs ---
+        self.lat = np.asarray(lat_array, dtype=np.float64)
+        self.lon = np.asarray(lon_array, dtype=np.float64)
+        self.pos = pos
+        self.size = size
+        self.color_past = Vec4(*color_past)
+        self.color_future = Vec4(*color_future)
+        self.panel_alpha = float(panel_alpha)
+
+        self.root = NodePath("map_root")
+        self.root.reparentTo(base.render2d)
+        self.root.setTransparency(True)
+        if self.panel_alpha < 1.0:
+            self.root.setColorScale(1, 1, 1, self.panel_alpha)
+
+        px, py, pz = pos
+        w, h = size
+
+        # ---------- BACKGROUND (filled card; optional texture) ----------
+        drew_texture = False
+        if texture_path:
+            try:
+                tex = loader.loadTexture(texture_path)
+                if tex:
+                    cm = CardMaker("map_tex_card")
+                    cm.setFrame(px, px + w, pz, pz + h)
+                    bg_card = self.root.attachNewNode(cm.generate())
+                    bg_card.setTexture(tex)
+                    bg_card.setTransparency(True)
+                    drew_texture = True
+            except Exception:
+                drew_texture = False
+
+        if not drew_texture:
+            cm = CardMaker("map_bg_card")
+            cm.setFrame(px, px + w, pz, pz + h)
+            bg_card = self.root.attachNewNode(cm.generate())
+            bg_card.setColor(*bg_color)
+            bg_card.setTransparency(True)
+
+        # ---------- GRID ----------
+        grid = LineSegs()
+        grid.setColor(*grid_color)
+        grid.setThickness(1.0)
+
+        NX = 8   # meridians
+        NY = 4   # parallels
+
+        for i in range(1, NX):
+            xx = px + (i / NX) * w
+            grid.moveTo(xx, py, pz)
+            grid.drawTo(xx, py, pz + h)
+
+        for j in range(1, NY):
+            zz = pz + (j / NY) * h
+            grid.moveTo(px,    py, zz)
+            grid.drawTo(px + w, py, zz)
+
+        self.grid_np = NodePath(grid.create())
+        self.grid_np.reparentTo(self.root)
+
+        # ---------- TRAJECTORY (equirectangular) ----------
+        lon_abs_max = float(np.nanmax(np.abs(self.lon)))
+        lat_abs_max = float(np.nanmax(np.abs(self.lat)))
+
+        lon_rad = np.deg2rad(self.lon) if lon_abs_max > np.pi * 1.01 else self.lon
+        lat_rad = np.deg2rad(self.lat) if lat_abs_max > (np.pi / 2) * 1.01 else self.lat
+
+        lat_rad = np.clip(lat_rad, -np.pi / 2, np.pi / 2)
+        lon_unwrapped = np.unwrap(lon_rad)
+
+        # Normalize to [0..1] in fixed world range
+        lon_norm = ((lon_unwrapped + np.pi) % (2 * np.pi)) / (2 * np.pi)  # [0, 1)
+        lat_norm = (lat_rad + (np.pi / 2)) / np.pi                        # [0, 1]
+
+        self.N = len(lon_norm)
+
+        fmt = GeomVertexFormat.getV3c4()
+        self.vdata = GeomVertexData("mapline", fmt, Geom.UH_dynamic)
+        self.vdata.setNumRows(self.N)
+
+        vw = GeomVertexWriter(self.vdata, "vertex")
+        cw = GeomVertexWriter(self.vdata, "color")
+
+        xs = px + lon_norm * w
+        zs = pz + lat_norm * h
+
+        for i in range(self.N):
+            vw.addData3f(xs[i], py, zs[i])
+            cw.addData4f(*self.color_future)
+
+        # Split line into strips when crossing dateline (avoid long wrap)
+        prim = GeomLinestrips(Geom.UH_static)
+        jumps = np.where(np.abs(np.diff(lon_norm)) > 0.5)[0] + 1
+        start = 0
+        for br in list(jumps) + [self.N]:
+            for i in range(start, br):
+                prim.addVertex(i)
+            prim.closePrimitive()
+            start = br
+
+        geom = Geom(self.vdata)
+        geom.addPrimitive(prim)
+        node = GeomNode("map_trajectory")
+        node.addGeom(geom)
+        self.line_np = NodePath(node)
+        self.line_np.reparentTo(self.root)
+        # ✅ Thickness without LineAttrib
+        self.line_np.setRenderModeThickness(2.0)
+
+        # ---------- MOVING MARKER (white crosshair) ----------
+        cross = LineSegs()
+        cross.setThickness(2.4)
+        cross.setColor(*marker_color)
+
+        s = 0.012 * min(w, h)  # cross size relative to panel
+        cross.moveTo(-s, py, 0); cross.drawTo( s, py, 0)
+        cross.moveTo( 0, py,-s); cross.drawTo( 0, py, s)
+
+        self.marker_np = NodePath(cross.create())
+        self.marker_np.reparentTo(self.root)
+
+        # Save for updates
+        self.px, self.py, self.pz = px, py, pz
+        self.w, self.h = w, h
+        self.lon_norm = lon_norm
+        self.lat_norm = lat_norm
+        self.xs = xs
+        self.zs = zs
+
+    def update(self, idx):
+        """Move marker and recolor trajectory (past white, future grey)."""
+        if idx < 0: idx = 0
+        if idx >= self.N: idx = self.N - 1
+
+        vx = self.px + self.lon_norm[idx] * self.w
+        vz = self.pz + self.lat_norm[idx] * self.h
+        self.marker_np.setPos(vx, self.py, vz)
+
+        cw = GeomVertexWriter(self.vdata, "color")
+        for i in range(self.N):
+            if i <= idx:
+                cw.setData4f(*self.color_past)
+            else:
+                cw.setData4f(*self.color_future)
+
+    def set_visible(self, flag):
+        self.root.show() if flag else self.root.hide()
+
+    def set_alpha(self, alpha: float):
+        """Adjust whole panel transparency at runtime."""
+        self.panel_alpha = float(max(0.0, min(1.0, alpha)))
+        self.root.setColorScale(1, 1, 1, self.panel_alpha)
 
 def draw_vectors(origin: Vec3, vel: Vec3, right: Vec3, up: Vec3, parent):
     """
@@ -826,6 +1018,26 @@ class Animation3D(ShowBase):
             color_future=(0.05, 0.35, 0.40, 1),
             xlabel="", ylabel="", label="AOA", yunits="°"
         )
+        # ===== MAP AT BOTTOM OF LEFT STACK =====
+        MAP_SIZE = GRAPH_SIZE
+        MAP_MARGIN = 0.0  # small extra gap below the last left graph
+
+        left_x = GRAPH_CENTER - GRAPH_HSPACE
+        bottom_y = GRAPH_POS_Y - 2 * GRAPH_VSPACE  # AOA is at -2*GRAPH_VSPACE
+        map_y = bottom_y - GRAPH_VSPACE - MAP_MARGIN
+
+        self.map_panel = SciFiMapPanel(
+            traj_lat, traj_lon,
+            pos=(left_x, 0, map_y),
+            size=MAP_SIZE,
+            color_past=PALETTE["white"],
+            color_future=PALETTE["grey_35"],
+            grid_color=PALETTE["grey_30a"],
+            bg_color=PALETTE["black_a35"],
+            marker_color=PALETTE["white"],
+            texture_path="models/earth/world_map.jpg",
+            panel_alpha=0.5
+        )
 
 
     def set_time_scale(self, scale):
@@ -956,6 +1168,7 @@ class Animation3D(ShowBase):
             self.aoa_graph.update(current_t)
             self.heat_graph.update(current_t)
             self.descent_graph.update(current_t)
+            self.map_panel.update(self.traj_index)
 
 
 
@@ -985,6 +1198,7 @@ class Animation3D(ShowBase):
         self.aoa_graph.set_visible(self.graphs_visible)
         self.heat_graph.set_visible(self.graphs_visible)
         self.descent_graph.set_visible(self.graphs_visible)
+        self.map_panel.set_visible(self.graphs_visible)
 
 
 

@@ -349,9 +349,77 @@ class Animation3D(ShowBase):
         self.time_scale = 1  # x1, x2, x5, x10
 
         # ======================
+        # MINI EARTH SCENE
+        # ======================
+
+        # New scene root
+        self.mini_render = NodePath("mini_render")
+
+        # New camera
+        self.mini_cam = self.makeCamera(self.win)
+        self.mini_cam.reparentTo(self.mini_render)
+        self.mini_cam.setPos(0, -4, 0)
+        self.mini_cam.lookAt(0, 0, 0)
+
+        dr = self.mini_cam.node().getDisplayRegion(0)
+        dr.setDimensions(0.72, 0.98, 0.65, 0.95)
+        dr.setSort(20)
+
+        dr.setClearColorActive(True)
+        dr.setClearDepthActive(True)
+        dr.setClearColor((0, 0, 0, 0))  # fully transparent
+
+        self.win.setClearColorActive(True)
+        self.mini_render.setTransparency(True)
+
+        self.mini_earth = loader.loadModel("models/earth/scene.gltf")
+        self.mini_root = self.mini_render.attachNewNode("mini_root")
+        self.mini_earth.reparentTo(self.mini_root)
+
+        # Normalize mini Earth to radius ~1
+        min_pt, max_pt = self.mini_earth.getTightBounds()
+        if min_pt is None:
+            self.mini_earth.flattenStrong()
+            min_pt, max_pt = self.mini_earth.getTightBounds()
+
+        size = max_pt - min_pt
+        diameter = (size.x + size.y + size.z) / 3
+
+        # We want radius ≈ 1
+        target_radius = 1.0
+        scale = (target_radius * 2.0) / diameter
+
+        self.mini_earth.setScale(scale)
+
+        # Center it properly
+        center = (min_pt + max_pt) * 0.5
+        self.mini_earth.setPos(-center * scale)
+
+        mini_light = DirectionalLight("mini_light")
+        mini_light.setColor(Vec4(1, 1, 1, 1))
+        mini_np = self.mini_render.attachNewNode(mini_light)
+        mini_np.setHpr(-30, -45, 0)
+
+        self.mini_render.setLight(mini_np)
+
+        mini_ambient = AmbientLight("mini_ambient")
+        mini_ambient.setColor(Vec4(0.3, 0.3, 0.3, 1))
+        amb_np = self.mini_render.attachNewNode(mini_ambient)
+
+        self.mini_render.setLight(amb_np)
+        self.mini_dot = loader.loadModel("models/misc/sphere")
+        self.mini_dot.reparentTo(self.mini_render)
+        self.mini_dot.setPos(0, 0, 1.05)  # slightly above surface
+
+        self.mini_dot.setScale(0.005)
+        self.mini_dot.setColor(1, 0, 0, 1)
+        self.draw_mini_trajectory()
+
+        # ======================
         # UI
         # ======================
         self.create_ui()
+
 
         # ======================
         # Animation task
@@ -363,6 +431,30 @@ class Animation3D(ShowBase):
         lens.setFar(5.0e6)  # 1 million meters
 
         self.camera.reparentTo(self.render)
+
+    def draw_mini_trajectory(self):
+
+        segs = LineSegs()
+        segs.setThickness(2.0)
+        segs.setColor(1, 1, 0, 1)
+
+        first = True
+        for la, lo in zip(traj_lat, traj_lon):
+            x = np.cos(la) * np.cos(lo)
+            y = np.cos(la) * np.sin(lo)
+            z = np.sin(la)
+
+            p = Vec3(x, y, z)
+
+            if first:
+                segs.moveTo(p)
+                first = False
+            else:
+                segs.drawTo(p)
+
+        node = NodePath(segs.create())
+        node.reparentTo(self.mini_root)
+
 
     # =====================================================
     # Lighting
@@ -594,7 +686,20 @@ class Animation3D(ShowBase):
 
         self.starship.setQuat(final_quat)
 
+        # Mini earth
 
+        lat_now = traj_lat[self.traj_index]
+        lon_now = traj_lon[self.traj_index]
+
+        lat_now = traj_lat[self.traj_index]
+        lon_now = traj_lon[self.traj_index]
+
+        # Convert radians to degrees
+        lat_deg = np.degrees(lat_now)
+        lon_deg = np.degrees(lon_now)
+
+        # Rotate Earth opposite spacecraft position
+        self.mini_root.setHpr(-lon_deg, lat_deg, 0)
 
         # 2. Draw them vectors (attach to render or starship root)
         # draw_vectors(starship_pos, vel_np, right, up, self.earth_root)

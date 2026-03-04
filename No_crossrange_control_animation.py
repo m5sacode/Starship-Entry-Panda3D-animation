@@ -369,26 +369,26 @@ class Animation3D(ShowBase):
     # =====================================================
     def setup_lighting(self):
         key_light = DirectionalLight("key_light")
-        key_light.setColor(Vec4(1.0, 0.95, 0.9, 1))
-        key_np = self.render.attachNewNode(key_light)
-        key_np.setHpr(45, -60, 0)
+        key_light.setColor(Vec4(0.5, 0.5, 0.5, 1))
+        key_np = self.starship.attachNewNode(key_light)
+        key_np.setHpr(-45, -60, 0)
         self.render.setLight(key_np)
 
         fill_light = DirectionalLight("fill_light")
         fill_light.setColor(Vec4(0.4, 0.45, 0.5, 1))
-        fill_np = self.render.attachNewNode(fill_light)
-        fill_np.setHpr(-60, -30, 0)
+        fill_np = self.starship.attachNewNode(fill_light)
+        fill_np.setHpr(60, -30, 0)
         self.render.setLight(fill_np)
 
         rim_light = DirectionalLight("rim_light")
         rim_light.setColor(Vec4(0.6, 0.6, 0.7, 1))
         rim_np = self.render.attachNewNode(rim_light)
-        rim_np.setHpr(180, -20, 0)
+        rim_np.setHpr(-180, -20, 0)
         self.render.setLight(rim_np)
 
         ambient = AmbientLight("ambient")
-        ambient.setColor(Vec4(0.03, 0.03, 0.03, 1))
-        amb_np = self.render.attachNewNode(ambient)
+        ambient.setColor(Vec4(0.1, 0.1, 0.1, 1))
+        amb_np = self.starship.attachNewNode(ambient)
         self.render.setLight(amb_np)
 
     # =====================================================
@@ -396,8 +396,8 @@ class Animation3D(ShowBase):
     # =====================================================
     def draw_trajectory(self, lat, lon, alt):
         segs = LineSegs()
-        segs.setThickness(1.5)
-        segs.setColor(1, 1, 1, 0.25)
+        segs.setThickness(3.0)  # thicker line
+        segs.setColor(0.5, 0.5, 0.5, 1.0)  # fully opaque white
 
         first = True
         for la, lo, al in zip(lat, lon, alt):
@@ -568,7 +568,7 @@ class Animation3D(ShowBase):
         right = right.normalized()  # perpendicular to forward and up
 
         # --- 2. Apply bank (rotate right/up around forward) ---
-        bank_rad = math.radians(bank_angles[self.traj_index])
+        bank_rad = -math.radians(bank_angles[self.traj_index])
         cos_b = math.cos(bank_rad)
         sin_b = math.sin(bank_rad)
 
@@ -598,12 +598,17 @@ class Animation3D(ShowBase):
 
         # 2. Draw them vectors (attach to render or starship root)
         # draw_vectors(starship_pos, vel_np, right, up, self.earth_root)
+        # Desired camera offset relative to Starship's velocity frame
+        cam_back = 300.0  # behind the Starship along velocity vector
+        cam_up = 50.0  # above Starship
 
-        # Desired offset from the Starship
-        offset = Vec3(120, -50, 200)  # X=forward, Y=back, Z=up (world axes)
+        # Camera in world space: Starship position minus forward vector * back offset
+        camera_pos = Vec3(0,0,0) - forward * cam_back \
+                     + up * cam_up \
+                     + 0.0
 
-        self.camera.setPos(offset)
-        self.camera.lookAt(Vec3(0,0,0), up)  # Z-axis as up
+        self.camera.setPos(camera_pos)
+        self.camera.lookAt(Vec3(0,0,0), up)
 
         return Task.cont
 

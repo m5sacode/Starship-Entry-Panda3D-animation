@@ -417,53 +417,83 @@ class Animation3D(ShowBase):
     def create_ui(self):
         aspect = base.getAspectRatio()
 
-        # --- Main UI bar ---
+        # ===== Unified color theme =====
+        BG_DARK = (0, 0, 0, 0.38)
+        BG_LIGHT = (0.15, 0.15, 0.15, 0.6)
+        FG_WHITE = (1, 1, 1, 1)
+        FG_GREY = (0.85, 0.85, 0.88, 1)
+        ACCENT = (0.2, 0.75, 1.0, 1.0)
+
+        # Better font rendering
+        font = loader.loadFont("models/fonts/Roboto-Medium.ttf")
+        font.setPixelsPerUnit(60)
+
+        # ===== Bottom HUD container =====
         self.ui_frame = DirectFrame(
-            frameColor=(0, 0, 0, 0.5),
-            frameSize=(-aspect, aspect, -0.1, 0.1),
-            pos=(0, 0, -0.95)
+            frameColor=BG_DARK,
+            frameSize=(-aspect, aspect, -0.14, 0.13),
+            pos=(0, 0, -0.9)
         )
 
-        self.ui_frame.setClipPlaneOff()
+        # Slight shadow under the HUD
+        shadow = DirectFrame(
+            frameColor=(0, 0, 0, 0.2),
+            frameSize=(-aspect, aspect, -0.01, 0.01),
+            pos=(0, 0, -0.9)
+        )
+        shadow.reparentTo(self.ui_frame)
 
-        # --- Play button (left) ---
-        self.play_button = DirectButton( text=" Paused ", scale=0.08, pos=(-0.4, 0, 0.02), command=self.toggle_play, parent=self.ui_frame )
-
-
-        # --- T-clock (CENTER, BIG) ---
-        self.t_clock = DirectLabel(
-            text="T+00:00:00",
-            scale=0.09,
-            pos=(0, 0, 0.02),
-            text_align=TextNode.ACenter,
-            text_fg=(1, 1, 1, 1),
-            text_shadow=(0, 0, 0, 1),
+        # ===== PLAY / PAUSE BUTTON =====
+        self.play_button = DirectButton(
+            text="Start",
+            scale=0.06,
+            pos=(-aspect + 0.05+0.15, 0, 0.015),
+            frameColor=BG_LIGHT,
+            frameSize=(-2.5, 2.5, -0.7, 1.3),
+            text_fg=FG_WHITE,
+            text_font=font,
+            # relief="ridge",
+            command=self.toggle_play,
             parent=self.ui_frame
         )
 
-        # --- Telemetry (RIGHT) ---
+        # ===== CENTRAL T‑Clock =====
+        self.t_clock = DirectLabel(
+            text="T+00:00:00",
+            scale=0.08,
+            pos=(0, 0, 0.02),
+            text_align=TextNode.ACenter,
+            text_fg=FG_WHITE,
+            text_shadow=(0, 0, 0, 0.9),
+            text_font=font,
+            parent=self.ui_frame
+        )
+
+        # ===== TELEMETRY PANEL (Right side) =====
         self.telemetry = DirectLabel(
             text="",
             scale=0.045,
-            pos=(aspect - 0.08, 0, 0.02),
+            pos=(aspect - 0.22, 0, 0.02),
             text_align=TextNode.ARight,
-            text_fg=(1, 1, 1, 1),
+            text_fg=FG_GREY,
             text_shadow=(0, 0, 0, 1),
+            text_font=font,
             parent=self.ui_frame
         )
 
-        # --- Progress bar (BOTTOM, FULL WIDTH) ---
+        # ===== PROGRESS BAR (Full width) =====
         self.progress = DirectWaitBar(
             range=len(traj_time),
             value=0,
             frameSize=(-aspect + 0.05, aspect - 0.05, -0.02, 0.02),
-            pos=(0, 0, -0.075),
+            pos=(0, 0, -0.06),
             parent=self.ui_frame,
-            barColor=(0.2, 0.7, 1.0, 1)
+            barColor=ACCENT,
+            frameColor=(0, 0, 0, 0.3)
         )
 
-        # --- Time scale buttons (below center) ---
-        x_positions = [-0.30, -0.15, 0.0, 0.15]
+        # ===== Time-scale buttons centered =====
+        x_positions = [-0.30, -0.10, 0.10, 0.30]
         scales = [1, 2, 5, 10]
 
         for x, s in zip(x_positions, scales):
@@ -471,6 +501,11 @@ class Animation3D(ShowBase):
                 text=f"x{s}",
                 scale=0.045,
                 pos=(x, 0, -0.035),
+                frameColor=BG_LIGHT,
+                frameSize=(-1.5, 1.5, -0.55, 0.55),
+                text_fg=FG_WHITE,
+                text_font=font,
+                relief="ridge",
                 command=self.set_time_scale,
                 extraArgs=[s],
                 parent=self.ui_frame

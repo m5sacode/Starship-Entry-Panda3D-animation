@@ -234,6 +234,209 @@ def descent_angle(vel: Vec3, up_local: Vec3) -> float:
 
 
 from panda3d.core import LineSegs, NodePath, Vec3
+from panda3d.core import (
+    GeomVertexFormat, GeomVertexData, Geom, GeomVertexWriter,
+    GeomLinestrips, GeomNode, Vec4, NodePath, LineSegs, TextNode
+)
+
+class FastSciFiGraph:
+    """
+    v6 — Full sci-fi graph system with:
+    - Grid
+    - Axes
+    - Background
+    - X and Y labels
+    - Floating dynamic Y-value label (T1 position)
+    - GPU-accelerated static geometry
+    """
+    def __init__(
+        self, x, y,
+        pos=(0.67, 0, 0.48),
+        size=(0.34, 0.26),
+        color_past=(1,1,1,1),
+        color_future=(0.25,0.25,0.25,1),
+        axis_color=(0.7,0.7,0.7,1),
+        grid_color=(0.3,0.3,0.3,0.4),
+        bgcolor=(0,0,0,0.35),
+        xlabel="Time (s)",
+        ylabel="Value",
+        label="Name",
+        yunits=""
+    ):
+        self.x = x
+        self.y = y
+        self.xlabel = xlabel
+        self.ylabel = ylabel
+        self.label = label
+        self.yunits = yunits
+
+        self.pos, self.size = pos, size
+        self.color_past = Vec4(*color_past)
+        self.color_future = Vec4(*color_future)
+
+        self.N = len(x)
+        self.xmin, self.xmax = float(x.min()), float(x.max())
+        self.ymin, self.ymax = float(y.min()), float(y.max())
+
+        self.root = NodePath("graph_root")
+        self.root.reparentTo(base.render2d)
+        self.root.setTransparency(True)
+
+        px, py, pz = pos
+        w, h = size
+
+        # ---------------- BACKGROUND ----------------
+        bg = LineSegs()
+        bg.setColor(*bgcolor)
+        bg.moveTo(px, py, pz)
+        bg.drawTo(px+w, py, pz)
+        bg.drawTo(px+w, py, pz+h)
+        bg.drawTo(px, py, pz+h)
+        bg.drawTo(px, py, pz)
+        self.bg_np = NodePath(bg.create())
+        self.bg_np.reparentTo(self.root)
+
+        # ---------------- GRID ----------------
+        grid = LineSegs()
+        grid.setColor(*grid_color)
+        grid.setThickness(1)
+
+        NX = 8
+        NY = 5
+
+        for i in range(1, NX):
+            xx = px + (i/NX)*w
+            grid.moveTo(xx, py, pz)
+            grid.drawTo(xx, py, pz+h)
+
+        for j in range(1, NY):
+            zz = pz + (j/NY)*h
+            grid.moveTo(px, py, zz)
+            grid.drawTo(px+w, py, zz)
+
+        self.grid_np = NodePath(grid.create())
+        self.grid_np.reparentTo(self.root)
+
+        # ---------------- AXES ----------------
+        ax = LineSegs()
+        ax.setColor(*axis_color)
+        ax.setThickness(2)
+
+        ax.moveTo(px,   py, pz)
+        ax.drawTo(px+w, py, pz)
+
+        ax.moveTo(px, py, pz)
+        ax.drawTo(px, py, pz+h)
+
+        self.axis_np = NodePath(ax.create())
+        self.axis_np.reparentTo(self.root)
+
+        # ---------------- AXIS LABELS ----------------
+        font = TextNode.getDefaultFont()
+
+        xlbl = TextNode("xlabel")
+        xlbl.setText(self.xlabel)
+        xlbl.setFont(font)
+        xlbl.setTextColor(1,1,1,0.9)
+        xlbl.setAlign(TextNode.ACenter)
+        xnp = self.root.attachNewNode(xlbl)
+        xnp.setScale(0.035)
+        xnp.setPos(px + w*0.5, py, pz - 0.04)
+
+        ylbl = TextNode("ylabel")
+        ylbl.setText(self.ylabel)
+        ylbl.setFont(font)
+        ylbl.setTextColor(1,1,1,0.9)
+        ylbl.setAlign(TextNode.ACenter)
+        ynp = self.root.attachNewNode(ylbl)
+        ynp.setScale(0.035)
+        ynp.setHpr(0, 0, 90)
+        ynp.setPos(px - 0.045, py, pz + h*0.5)
+
+        lbl = TextNode("label")
+        lbl.setText(self.label)
+        lbl.setFont(font)
+        lbl.setTextColor(1, 1, 1, 0.9)
+        lbl.setAlign(TextNode.ACenter)
+        lnp = self.root.attachNewNode(lbl)
+        lnp.setScale(0.02)
+        lnp.setPos(px + w * 0.5, py, pz + h + 0.01)
+
+        # ---------------- DYNAMIC FLOATING VALUE LABEL ----------------
+        self.vlabel = TextNode("vlabel")
+        self.vlabel.setFont(font)
+        self.vlabel.setTextColor(1,1,1,0.9)
+        self.vlabel.setAlign(TextNode.ARight)
+        self.vlabel_np = self.root.attachNewNode(self.vlabel)
+        self.vlabel_np.setScale(0.02)
+
+        # ---------------- GPU LINE STRIP ----------------
+        fmt = GeomVertexFormat.getV3c4()
+        self.vdata = GeomVertexData("graph", fmt, Geom.UH_dynamic)
+        self.vdata.setNumRows(self.N)
+
+        vwriter = GeomVertexWriter(self.vdata, "vertex")
+        cwriter = GeomVertexWriter(self.vdata, "color")
+
+        for i in range(self.N):
+            xn = (self.x[i]-self.xmin)/(self.xmax-self.xmin)
+            yn = (self.y[i]-self.ymin)/(self.ymax-self.ymin)
+
+            vx = px + xn*w
+            vy = py
+            vz = pz + yn*h
+
+            vwriter.addData3(vx,vy,vz)
+            cwriter.addData4(*self.color_future)
+
+        prim = GeomLinestrips(Geom.UH_static)
+        for i in range(self.N):
+            prim.addVertex(i)
+        prim.closePrimitive()
+
+        geom = Geom(self.vdata)
+        geom.addPrimitive(prim)
+        node = GeomNode("graph_line")
+        node.addGeom(geom)
+
+        self.line_np = NodePath(node)
+        self.line_np.reparentTo(self.root)
+
+    # ------------ FAST UPDATE PER FRAME ------------
+    def update(self, t):
+
+        # find current index
+        idx = np.searchsorted(self.x, t)
+        if idx >= self.N:
+            idx = self.N - 1
+
+        current_value = self.y[idx]
+        norm_y = (current_value - self.ymin)/(self.ymax-self.ymin)
+
+        px, py, pz = self.pos
+        w, h = self.size
+
+        # update floating value text
+        self.vlabel.setText(
+            f"{current_value:.2f}{self.yunits}"
+        )
+
+        self.vlabel_np.setPos(
+            px - 0.01, py,
+            pz + norm_y*h
+        )
+
+        # update color buffer
+        cwriter = GeomVertexWriter(self.vdata, "color")
+        for i in range(self.N):
+            if self.x[i] <= t:
+                cwriter.setData4f(*self.color_past)
+            else:
+                cwriter.setData4f(*self.color_future)
+
+    def set_visible(self, flag):
+        if flag: self.root.show()
+        else:    self.root.hide()
 
 
 def draw_vectors(origin: Vec3, vel: Vec3, right: Vec3, up: Vec3, parent):
@@ -528,6 +731,102 @@ class Animation3D(ShowBase):
                 extraArgs=[value],
                 parent=self.ui_frame
             )
+        self.graphs_visible = True
+        # ===== TOGGLE GRAPHS BUTTON =====
+        DirectButton(
+            text="GRAPHS",
+            scale=0.06,
+            pos=(start_btn_x + 0.32 + 4 * spacing + 0.22, 0, base_y),
+            frameColor=BG_LIGHT,
+            frameSize=(-2.5, 2.5, -0.7, 1.3),  # same height as Start/Pause
+            text_fg=FG_WHITE,
+            text_font=font,
+            # relief="flat",
+            command=self.toggle_graphs,
+            parent=self.ui_frame
+        )
+        # ====== Create Graphs ======
+
+        GRAPH_SIZE = (0.38, 0.30)  # width, height
+        GRAPH_CENTER = -0.19  # center reference (usually 0)
+        GRAPH_HSPACE = 0.65  # horizontal offset from center
+        GRAPH_POS_Y = 0.6  # Y position of top graphs
+        GRAPH_VSPACE = 0.4  # vertical spacing between rows
+
+        # ---------- RIGHT COLUMN (4 graphs): ALT → MACH → HEAT FLUX → DESCENT RATE ----------
+
+        # RIGHT TOP — ALTITUDE (red)
+        self.alt_graph = FastSciFiGraph(
+            traj_time, traj_alt / 1000,
+            pos=(GRAPH_CENTER + GRAPH_HSPACE, 0, GRAPH_POS_Y),
+            size=GRAPH_SIZE,
+            color_past=(1, 0.2, 0.2, 1),
+            color_future=(0.2, 0.05, 0.05, 1),
+            xlabel="", ylabel="", label="Altitude", yunits=" km"
+        )
+
+        # RIGHT MID — MACH (green)
+        self.mach_graph = FastSciFiGraph(
+            traj_time, traj_mach,
+            pos=(GRAPH_CENTER + GRAPH_HSPACE, 0, GRAPH_POS_Y - GRAPH_VSPACE),
+            size=GRAPH_SIZE,
+            color_past=(0.2, 1, 0.2, 1),
+            color_future=(0.05, 0.2, 0.05, 1),
+            xlabel="", ylabel="", label="Mach", yunits=""
+        )
+
+        # RIGHT LOWER-MID — HEAT FLUX (purple)  <<< swapped to RIGHT column
+        self.heat_graph = FastSciFiGraph(
+            traj_time, heat_fluxes / 1000.0,  # kW/cm^2 if original is W/cm^2
+            pos=(GRAPH_CENTER + GRAPH_HSPACE, 0, GRAPH_POS_Y - 2 * GRAPH_VSPACE),
+            size=GRAPH_SIZE,
+            color_past=(0.9, 0.2, 1.0, 1),  # Purple
+            color_future=(0.25, 0.1, 0.3, 1),
+            xlabel="", ylabel="", label="Heat Flux", yunits=" kW/cm2"
+        )
+
+        # RIGHT BOTTOM — DESCENT RATE (white)
+        self.descent_graph = FastSciFiGraph(
+            traj_time, descent_rates,  # assumes m/s
+            pos=(GRAPH_CENTER + GRAPH_HSPACE, 0, GRAPH_POS_Y - 3 * GRAPH_VSPACE),
+            size=GRAPH_SIZE,
+            color_past=(1.0, 1.0, 1.0, 1),  # White past
+            color_future=(0.35, 0.35, 0.35, 1),  # Grey future
+            xlabel="", ylabel="", label="Descent Rate", yunits=" m/s"
+        )
+
+        # ---------- LEFT COLUMN (3 graphs): G → BANK → AOA (swapped from right) ----------
+
+        # LEFT TOP — G‑FORCE (orange)
+        self.g_graph = FastSciFiGraph(
+            traj_time, g_forces,
+            pos=(GRAPH_CENTER - GRAPH_HSPACE, 0, GRAPH_POS_Y),
+            size=GRAPH_SIZE,
+            color_past=(1.0, 0.6, 0.1, 1),  # Orange
+            color_future=(0.3, 0.15, 0.05, 1),
+            xlabel="", ylabel="", label="G-Force", yunits=" g"
+        )
+
+        # LEFT MID — BANK ANGLE (blue)
+        self.bank_graph = FastSciFiGraph(
+            traj_time, bank_angles,
+            pos=(GRAPH_CENTER - GRAPH_HSPACE, 0, GRAPH_POS_Y - GRAPH_VSPACE),
+            size=GRAPH_SIZE,
+            color_past=(0.2, 0.55, 1.0, 1),  # Blue
+            color_future=(0.07, 0.18, 0.3, 1),
+            xlabel="", ylabel="", label="Bank Angle", yunits="°"
+        )
+
+        # LEFT BOTTOM — AOA (cyan)  <<< swapped to LEFT column
+        self.aoa_graph = FastSciFiGraph(
+            traj_time, aoas,
+            pos=(GRAPH_CENTER - GRAPH_HSPACE, 0, GRAPH_POS_Y - 2 * GRAPH_VSPACE),
+            size=GRAPH_SIZE,
+            color_past=(0.1, 0.9, 1.0, 1),  # Cyan
+            color_future=(0.05, 0.35, 0.40, 1),
+            xlabel="", ylabel="", label="AOA", yunits="°"
+        )
+
 
     def set_time_scale(self, scale):
         self.time_scale = scale
@@ -647,6 +946,17 @@ class Animation3D(ShowBase):
 
         self.starship.setQuat(final_quat)
 
+        # ===== Update Graphs =====
+        if self.graphs_visible:
+            current_t = traj_time[self.traj_index]
+            self.alt_graph.update(current_t)
+            self.mach_graph.update(current_t)
+            self.bank_graph.update(current_t)
+            self.g_graph.update(current_t)
+            self.aoa_graph.update(current_t)
+            self.heat_graph.update(current_t)
+            self.descent_graph.update(current_t)
+
 
 
         # 2. Draw them vectors (attach to render or starship root)
@@ -664,6 +974,17 @@ class Animation3D(ShowBase):
         self.camera.lookAt(Vec3(0,0,0), up)
 
         return Task.cont
+
+
+    def toggle_graphs(self):
+        self.graphs_visible = not self.graphs_visible
+        self.alt_graph.set_visible(self.graphs_visible)
+        self.mach_graph.set_visible(self.graphs_visible)
+        self.g_graph.set_visible(self.graphs_visible)
+        self.bank_graph.set_visible(self.graphs_visible)
+        self.aoa_graph.set_visible(self.graphs_visible)
+        self.heat_graph.set_visible(self.graphs_visible)
+        self.descent_graph.set_visible(self.graphs_visible)
 
 
 

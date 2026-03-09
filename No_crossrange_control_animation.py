@@ -114,7 +114,7 @@ sc.alpha = 50
 import os
 
 cache_file = "reentry_run_starship_IFT_s_turns.npz"
-
+# cache_file = "reentry_run_starship_IFT_max_cr.npz"
 # cache_file = "reentry_run_starship_IFT_no_s_turns.npz"
 
 
@@ -140,7 +140,7 @@ else:
     times, altitudes, speeds, machs, bank_angles, g_forces, descent_rates, positions, lon, lat, heat_loads, heat_fluxes, aoas, sogs_vecs = sc.run_reentry(
         gif=False,
         controller="aPQC",
-        DTLH=True
+        heading_controller="MAX_CR", # MAX_CR for max cross range or DTLH for landing on target coordinates
     )
 
     np.savez(cache_file,

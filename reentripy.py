@@ -1333,7 +1333,7 @@ class Spacecraft:
         # Crossrange ≈ range * sin(heading error)
         self.crossrange = self.range * np.sin(delta)
 
-    def run_reentry(self, gif=True, controller=None, plot=True, dt=0.1, planet_radius=6_371_000.0, mu=3.986004418e14, gif_name="reentry.gif", DTLH=False):
+    def run_reentry(self, gif=True, controller=None, plot=True, dt=0.1, planet_radius=6_371_000.0, mu=3.986004418e14, gif_name="reentry.gif", heading_controller = "DTLH"):
         """
         Simulates reentry until altitude < 1 km.
         Records:
@@ -1354,6 +1354,7 @@ class Spacecraft:
         self.t=t
         self.started_c = False
         self.controller = controller
+        self.heading_controller = heading_controller
         self.max_banking_angle = 0.0
         initial_altitude = self.altitude
         # --- Initialization ---
@@ -1442,11 +1443,16 @@ class Spacecraft:
             else:
                 max_bank_angles.append(0.0)
 
-            if DTLH:
+            if self.heading_controller == "DTLH":
                 # self.direct_to_landing_heading_controller()
 
                 self.update_crossrange()
                 self.banking_angle_range_S_turn_controller()
+            elif self.heading_controller == "MAX_CR":
+                if hasattr(self, "max_banking_angle"):
+                    self.banking_angle = self.max_banking_angle
+                else:
+                    self.banking_angle = 0
 
             if self.controller=="PDR":
                 if altitude < 3000.0:
@@ -1507,11 +1513,11 @@ class Spacecraft:
                     self.attack_angle_h_PD_controller_smart_g_control()
             elif self.controller=="terminal":
                 if self.altitude < 2000.0 or self.range<1000.0 or self.target_heading>200.0:
-                    self.banking_angle = 0
-                    self.alpha = 90
-                    DTLH=False
+                    self.banking_angle = np.deg2rad(50)
+                    self.alpha = 50
+                    self.heading_controller=""
                 else:
-                    self.alpha = 45
+                    self.alpha = 50
                     self.max_banking_angle = np.pi/2
                     self.targetDR=0
                     self.target_altitude = 0
